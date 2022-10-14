@@ -47,12 +47,13 @@ will be launched via "bash -c" using "exec". The shell can be changed with the
 			name := strings.TrimSpace(args[2])
 			quiet, _ := cmd.Flags().GetBool("quiet")
 			shell, _ := cmd.Flags().GetString("shell")
+			noShell, _ := cmd.Flags().GetBool("no-shell")
 
-			var quoted []string
-			for _, s := range args[3:] {
-				quoted = append(quoted, fmt.Sprintf("\"%s\"", strings.Replace(s, "\"", "\\\"", -1)))
-			}
-			subcmd := strings.Join(quoted, " ")
+			// var subcmd []string
+			subcmd := args[3:]
+			// for _, s := range args[3:] {
+				// subcmd = append(subcmd, fmt.Sprintf("\"%s\"", strings.Replace(s, "\"", "\\\"", -1)))
+			// }
 
 			ev := createEvent(cfg, *ciProvider, traceID)
 			defer ev.Send()
@@ -75,7 +76,7 @@ will be launched via "bash -c" using "exec". The shell can be changed with the
 				ParentID:     spanID,
 				TraceContext: localFields,
 			}
-			err := runCommand(subcmd, prop, quiet, shell)
+			err := runCommand(subcmd, prop, quiet, shell, noShell)
 			dur := time.Since(start)
 
 			ev.Add(map[string]interface{}{
@@ -110,16 +111,32 @@ will be launched via "bash -c" using "exec". The shell can be changed with the
 	}
 	var quiet bool
 	var shell string
+	var noShell bool
 	execCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "silence non-cmd output")
 	execCmd.Flags().StringVarP(&shell, "shell", "s", "/bin/bash", "path of shell executable to use for command, must accept -c as an argument")
+	execCmd.Flags().BoolVarP(&noShell, "no-shell", "", false, "disable wrapping the command in a shell")
+	execCmd.MarkFlagsMutuallyExclusive("shell", "no-shell")
 	return execCmd
 }
 
-func runCommand(subcmd string, prop *propagation.PropagationContext, quiet bool, shell string) error {
-	if !quiet {
-		fmt.Println("running", shell, "-c", subcmd)
+func runCommand(subcmd []string, prop *propagation.PropagationContext, quiet bool, shell string, noShell bool) error {
+	var cmd *exec.Cmd
+	if noShell {
+		if !quiet {
+			fmt.Println("running", strings.Join(subcmd, " "))
+		}
+		cmd = exec.Command(subcmd[0], subcmd[1:]...)
+	} else {
+		if !quiet {
+			fmt.Println("running", shell, "-c", subcmd)
+		}
+		var quoted []string
+		for _, s := range subcmd {
+			quoted = append(quoted, fmt.Sprintf("\"%s\"", strings.Replace(s, "\"", "\\\"", -1)))
+		}
+		scriptcmd := strings.Join(quoted, " ")
+		cmd = exec.Command(shell, "-c", scriptcmd)
 	}
-	cmd := exec.Command(shell, "-c", subcmd)
 
 	cmd.Env = append(os.Environ(),
 		"HONEYCOMB_TRACE="+propagation.MarshalHoneycombTraceContext(prop),
